@@ -672,6 +672,9 @@ Service_.prototype.parseToken_ = function(content) {
     throw new Error('Unknown token format: ' + this.tokenFormat_);
   }
   token.granted_time = getTimeInSeconds_(new Date());
+  if (token.refresh_expires_in) {
+    token.refresh_token_expires_in = token.refresh_expires_in;
+  }
   return token;
 };
 
@@ -692,14 +695,22 @@ Service_.prototype.refresh = function() {
       throw new Error('Offline access is required.');
     }
     var payload = {
-        refresh_token: token.refresh_token,
-        client_id: this.clientId_,
-        client_secret: this.clientSecret_,
-        grant_type: 'refresh_token'
+      refresh_token: token.refresh_token,
+      client_id: this.clientId_,
+      client_secret: this.clientSecret_,
+      grant_type: 'refresh_token',
     };
     var newToken = this.fetchToken_(payload, this.refreshUrl_);
     if (!newToken.refresh_token) {
       newToken.refresh_token = token.refresh_token;
+    }
+    if (
+      !newToken.refresh_token_expires_in &&
+      token.refresh_token_expires_in
+    ) {
+      newToken.refresh_token_expires_in =
+        token.refresh_token_expires_in +
+        (token.granted_time - newToken.granted_time);
     }
     this.saveToken_(newToken);
   });
