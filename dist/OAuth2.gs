@@ -228,7 +228,7 @@ Service_.prototype.setCodeVerififer = function(codeVerifier) {
 };
 
 /**
- * Sets teh code verifier to a randomly generated challenge string.
+ * Sets the code verifier to a randomly generated challenge string.
  * @return {!Service_} This service, for chaining
  */
 Service_.prototype.generateCodeVerifier = function() {
@@ -724,8 +724,34 @@ Service_.prototype.parseToken_ = function(content) {
   } else {
     throw new Error('Unknown token format: ' + this.tokenFormat_);
   }
-  token.granted_time = getTimeInSeconds_(new Date());
+  this.ensureExpiresAtSet_(token);
   return token;
+};
+
+/**
+ * Adds expiresAt annotations on the token if not set.
+ * @param {string} token A token.
+ * @private
+ */
+Service_.prototype.ensureExpiresAtSet_ = function(token) {
+  // handle prior migrations
+  if (token.expiresAt !== undefined) {
+    return;
+  }
+
+  // granted_time was added in prior versions of this library
+  var grantedTime = token.granted_time || getTimeInSeconds_(new Date());
+  var expiresIn = token.expires_in_sec || token.expires_in || token.expires;
+  if (expiresIn) {
+    var expiresAt = grantedTime + Number(expiresIn);
+    token.expiresAt = expiresAt;
+  }
+  var refreshTokenExpiresIn = token.refresh_token_expires_in ||
+    token.refresh_expires_in;
+  if (refreshTokenExpiresIn) {
+    var refreshTokenExpiresAt = grantedTime + Number(refreshTokenExpiresIn);
+    token.refreshTokenExpiresAt = refreshTokenExpiresAt;
+  }
 };
 
 /**
@@ -753,6 +779,11 @@ Service_.prototype.refresh = function() {
     var newToken = this.fetchToken_(payload, this.refreshUrl_);
     if (!newToken.refresh_token) {
       newToken.refresh_token = token.refresh_token;
+    }
+    this.ensureExpiresAtSet_(token);
+    // Propagate refresh token expiry if new token omits it
+    if (newToken.refreshTokenExpiresAt === undefined) {
+      newToken.refreshTokenExpiresAt = token.refreshTokenExpiresAt;
     }
     this.saveToken_(newToken);
   });
@@ -805,6 +836,13 @@ Service_.prototype.isExpired_ = function(token) {
   var now = getTimeInSeconds_(new Date());
 
   // Check the authorization token's expiration.
+  if (token.expiresAt) {
+    if (token.expiresAt - now < Service_.EXPIRATION_BUFFER_SECONDS_) {
+      expired = true;
+    }
+  }
+
+  // Previous code path, provided for migration purpose, can be removed later
   var expiresIn = token.expires_in_sec || token.expires_in || token.expires;
   if (expiresIn) {
     var expiresTime = token.granted_time + Number(expiresIn);
@@ -833,13 +871,14 @@ Service_.prototype.isExpired_ = function(token) {
  */
 Service_.prototype.canRefresh_ = function(token) {
   if (!token.refresh_token) return false;
-  var expiresIn = token.refresh_token_expires_in;
-  if (!expiresIn) {
+  this.ensureExpiresAtSet_(token);
+  if (token.refreshTokenExpiresAt === undefined) {
     return true;
   } else {
-    var expiresTime = token.granted_time + Number(expiresIn);
     var now = getTimeInSeconds_(new Date());
-    return expiresTime - now > Service_.EXPIRATION_BUFFER_SECONDS_;
+    return (
+      token.refreshTokenExpiresAt - now > Service_.EXPIRATION_BUFFER_SECONDS_
+    );
   }
 };
 
